@@ -1,68 +1,31 @@
-
-#############################################
-# ECR
-#############################################
-resource "aws_ecr_repository" "strapi" {
-  name = "strapi-app"
+module "ecr" {
+  source    = "./modules/ecr"
+  repo_name = var.app_name
 }
 
-#############################################
-# ECS Cluster
-#############################################
-resource "aws_ecs_cluster" "main" {
-  name = "strapi-cluster"
+module "vpc" {
+  source = "./modules/vpc"
 }
 
-#############################################
-# ECS Task Definition
-#############################################
-resource "aws_ecs_task_definition" "strapi" {
-  family       = "strapi-task"
-  network_mode = "bridge"
-
-  container_definitions = jsonencode([{
-    name      = "strapi"
-    image     = "${aws_ecr_repository.strapi.repository_url}:latest"
-    essential = true
-
-    portMappings = [{
-      containerPort = 1337
-      hostPort      = 1337
-    }]
-
-    environment = [
-      {
-        name  = "DATABASE_HOST"
-        value = aws_db_instance.strapi_db.address
-      },
-      {
-        name  = "DATABASE_PORT"
-        value = "5432"
-      },
-      {
-        name  = "DATABASE_NAME"
-        value = "postgres"
-      },
-      {
-        name  = "DATABASE_USERNAME"
-        value = "strapi"
-      },
-      {
-        name  = "DATABASE_PASSWORD"
-        value = "StrapiPassword123"
-      }
-    ]
-  }])
+module "ecs" {
+  source = "./modules/ecs"
 }
 
-#############################################
-# ECS Service (single EC2 launch type)
-#############################################
-resource "aws_ecs_service" "strapi" {
-  name            = "strapi-service"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.strapi.arn
-  desired_count   = 1
-  launch_type     = "EC2"
+module "iam" {
+  source = "./modules/iam"
 }
 
+module "task_definition" {
+  source             = "./modules/task-definition"
+  execution_role_arn = module.iam.execution_role_arn
+  image_uri          = var.image_uri
+  container_port     = var.container_port
+}
+
+module "service" {
+  source       = "./modules/service"
+  cluster_id   = module.ecs.cluster_id
+  task_def_arn = module.task_definition.task_def_arn
+  subnets      = module.vpc.subnets
+  sg_id        = module.vpc.sg_id
+}
