@@ -1,7 +1,13 @@
 #############################################
-# ECR Repository
+# Provider
 #############################################
+provider "aws" {
+  region = "ap-south-1"
+}
 
+#############################################
+# ECR
+#############################################
 resource "aws_ecr_repository" "strapi" {
   name = "strapi-app"
 }
@@ -9,15 +15,13 @@ resource "aws_ecr_repository" "strapi" {
 #############################################
 # ECS Cluster
 #############################################
-
 resource "aws_ecs_cluster" "main" {
   name = "strapi-cluster"
 }
 
 #############################################
-# ECS Task Definition (EC2)
+# ECS Task Definition
 #############################################
-
 resource "aws_ecs_task_definition" "strapi" {
   family       = "strapi-task"
   network_mode = "bridge"
@@ -58,9 +62,8 @@ resource "aws_ecs_task_definition" "strapi" {
 }
 
 #############################################
-# ECS Service
+# ECS Service (single EC2 launch type)
 #############################################
-
 resource "aws_ecs_service" "strapi" {
   name            = "strapi-service"
   cluster         = aws_ecs_cluster.main.id

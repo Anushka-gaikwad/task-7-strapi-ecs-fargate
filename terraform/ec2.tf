@@ -1,7 +1,6 @@
 #############################################
-# Default VPC & Subnets
+# Security Group for EC2
 #############################################
-
 data "aws_vpc" "default" {
   default = true
 }
@@ -12,25 +11,6 @@ data "aws_subnets" "default" {
     values = [data.aws_vpc.default.id]
   }
 }
-
-#############################################
-# ECS Optimized AMI
-#############################################
-
-data "aws_ami" "ecs" {
-  most_recent = true
-
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-ecs-hvm-*-x86_64-ebs"]
-  }
-
-  owners = ["amazon"]
-}
-
-#############################################
-# Security Group for EC2
-#############################################
 
 resource "aws_security_group" "ecs_sg" {
   name   = "ecs-ec2-sg"
@@ -59,56 +39,62 @@ resource "aws_security_group" "ecs_sg" {
 }
 
 #############################################
-# Launch Template for ECS EC2 Instances
+# Single EC2 Instance
 #############################################
-
-resource "aws_launch_template" "ecs" {
-  name_prefix   = "ecs-template-"
-  image_id      = data.aws_ami.ecs.id
+resource "aws_instance" "ecs" {
+  ami           = data.aws_ami.ecs.id
   instance_type = "t2.micro"
+  subnet_id     = data.aws_subnets.default.ids[0]
+  security_groups = [aws_security_group.ecs_sg.name]
+  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
 
-  iam_instance_profile {
-    name = aws_iam_instance_profile.ecs_instance_profile.name
-  }
-
-  vpc_security_group_ids = [aws_security_group.ecs_sg.id]
-
-  user_data = base64encode(<<EOF
+  user_data = <<EOF
 #!/bin/bash
 yum update -y
 amazon-linux-extras install docker git -y
 service docker start
 usermod -a -G docker ec2-user
 
-# Login to ECR using EC2 instance role
+# Login to ECR
 $(aws ecr get-login --no-include-email --region ap-south-1)
-
-# Pull your Strapi app from GitHub
-cd /home/ec2-user
-git clone https://github.com/Anushka-gaikwad/task-7-strapy-ecs-fargate.git strapi-app
-
-# Build and push Docker image
-cd strapi-app/app
-docker build -t strapi-app:latest .
-docker tag strapi-app:latest ${aws_ecr_repository.strapi.repository_url}:latest
-docker push ${aws_ecr_repository.strapi.repository_url}:latest
 EOF
-  )
 }
 
 #############################################
-# Auto Scaling Group for ECS EC2 Instances
+# ECS Optimized AMI
 #############################################
+data "aws_ami" "ecs" {
+  most_recent = true
+  owners      = ["amazon"]
 
-resource "aws_autoscaling_group" "ecs" {
-  desired_capacity    = 1
-  min_size            = 1
-  max_size            = 1
-  vpc_zone_identifier = data.aws_subnets.default.ids
-
-  launch_template {
-    id      = aws_launch_template.ecs.id
-    version = "$Latest"
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-ecs-hvm-*-x86_64-ebs"]
   }
+}
+
+#############################################
+# IAM Role & Instance Profile
+#############################################
+resource "aws_iam_role" "ecs_role" {
+  name = "ecsEC2Role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_attach" {
+  role       = aws_iam_role.ecs_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ecsInstanceProfile"
+  role = aws_iam_role.ecs_role.name
 }
 
