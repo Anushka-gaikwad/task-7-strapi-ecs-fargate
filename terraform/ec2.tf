@@ -48,19 +48,23 @@ resource "aws_launch_template" "ecs" {
 
   user_data = base64encode(<<EOF
 #!/bin/bash
-echo ECS_CLUSTER=${aws_ecs_cluster.main.name} >> /etc/ecs/ecs.config
-EOF
-  )
-}
-resource "aws_autoscaling_group" "ecs" {
-  desired_capacity    = 1
-  max_size            = 1
-  min_size            = 1
-  vpc_zone_identifier = data.aws_subnets.default.ids
+yum update -y
+amazon-linux-extras install docker git -y
+service docker start
+usermod -a -G docker ec2-user
 
-  launch_template {
-    id      = aws_launch_template.ecs.id
-    version = "$Latest"
-  }
-}
+# Login to ECR using EC2 instance role
+$(aws ecr get-login --no-include-email --region ap-south-1)
+
+# Pull your Strapi app from GitHub
+cd /home/ec2-user
+git clone https://github.com/Anushka-gaikwad/task-7-strapy-ecs-fargate.git strapi-app
+
+# Build and push Docker image
+cd strapi-app/app
+docker build -t strapi-app:latest .
+docker tag strapi-app:latest ${aws_ecr_repository.strapi.repository_url}:latest
+docker push ${aws_ecr_repository.strapi.repository_url}:latest
+EOF
+)
 

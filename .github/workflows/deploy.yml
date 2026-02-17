@@ -10,29 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          terraform_version: 1.7.7
 
-      - name: Login to ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build and Push
-        run: |
-          IMAGE_TAG=${{ github.sha }}
-          docker build -t strapi-app ./app
-          docker tag strapi-app:latest ${{ steps.login-ecr.outputs.registry }}/strapi-app:$IMAGE_TAG
-          docker push ${{ steps.login-ecr.outputs.registry }}/strapi-app:$IMAGE_TAG
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
 
       - name: Terraform Apply
-        run: |
-          cd terraform
-          terraform init
-          terraform apply -auto-approve -var="image_tag=${{ github.sha }}"
+        run: terraform -chdir=terraform apply -auto-approve
 

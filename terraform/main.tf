@@ -1,5 +1,5 @@
 #############################################
-# ECR
+# ECR Repository
 #############################################
 
 resource "aws_ecr_repository" "strapi" {
@@ -15,7 +15,7 @@ resource "aws_ecs_cluster" "main" {
 }
 
 #############################################
-# IAM Role for EC2 Instances
+# IAM Role & Instance Profile for EC2
 #############################################
 
 resource "aws_iam_role" "ecs_ec2_role" {
@@ -26,7 +26,7 @@ resource "aws_iam_role" "ecs_ec2_role" {
     Statement = [{
       Effect = "Allow"
       Principal = { Service = "ec2.amazonaws.com" }
-      Action = "sts:AssumeRole"
+      Action   = "sts:AssumeRole"
     }]
   })
 }
@@ -42,18 +42,33 @@ resource "aws_iam_instance_profile" "ecs_instance_profile" {
 }
 
 #############################################
-# ECS Optimized AMI
+# Security Group for EC2
 #############################################
 
-data "aws_ami" "ecs" {
-  most_recent = true
+resource "aws_security_group" "ecs_sg" {
+  name   = "ecs-ec2-sg"
+  vpc_id = data.aws_vpc.default.id
 
-  filter {
-    name   = "name"
-    values = ["amzn2-ami-ecs-hvm-*-x86_64-ebs"]
+  ingress {
+    from_port   = 1337
+    to_port     = 1337
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
-  owners = ["amazon"]
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 }
 
 #############################################
@@ -72,6 +87,21 @@ data "aws_subnets" "default" {
 }
 
 #############################################
+# ECS Optimized AMI
+#############################################
+
+data "aws_ami" "ecs" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-ecs-hvm-*-x86_64-ebs"]
+  }
+
+  owners = ["amazon"]
+}
+
+#############################################
 # Launch Template
 #############################################
 
@@ -84,21 +114,37 @@ resource "aws_launch_template" "ecs" {
     name = aws_iam_instance_profile.ecs_instance_profile.name
   }
 
+  vpc_security_group_ids = [aws_security_group.ecs_sg.id]
+
   user_data = base64encode(<<EOF
 #!/bin/bash
-echo ECS_CLUSTER=${aws_ecs_cluster.main.name} >> /etc/ecs/ecs.config
+yum update -y
+amazon-linux-extras install docker -y
+service docker start
+usermod -a -G docker ec2-user
+
+# Login to ECR using EC2 instance role
+$(aws ecr get-login --no-include-email --region us-east-1)
+
+# Pull / build Strapi image
+mkdir -p /home/ec2-user/strapi-app
+cd /home/ec2-user/strapi-app
+# Optionally, you could git clone your Strapi project here
+docker build -t strapi-app:latest .
+docker tag strapi-app:latest ${aws_ecr_repository.strapi.repository_url}:latest
+docker push ${aws_ecr_repository.strapi.repository_url}:latest
 EOF
   )
 }
 
 #############################################
-# Auto Scaling Group
+# Auto Scaling Group for ECS EC2 Instances
 #############################################
 
 resource "aws_autoscaling_group" "ecs" {
   desired_capacity   = 1
-  max_size           = 1
   min_size           = 1
+  max_size           = 1
   vpc_zone_identifier = data.aws_subnets.default.ids
 
   launch_template {
@@ -108,7 +154,7 @@ resource "aws_autoscaling_group" "ecs" {
 }
 
 #############################################
-# Task Definition (EC2)
+# ECS Task Definition (EC2)
 #############################################
 
 resource "aws_ecs_task_definition" "strapi" {
@@ -117,7 +163,7 @@ resource "aws_ecs_task_definition" "strapi" {
 
   container_definitions = jsonencode([{
     name      = "strapi"
-    image     = "${aws_ecr_repository.strapi.repository_url}:${var.image_tag}"
+    image     = "${aws_ecr_repository.strapi.repository_url}:latest"
     essential = true
 
     portMappings = [{
@@ -136,7 +182,7 @@ resource "aws_ecs_task_definition" "strapi" {
       },
       {
         name  = "DATABASE_NAME"
-        value = "strapidb"
+        value = "postgres"
       },
       {
         name  = "DATABASE_USERNAME"
