@@ -37,17 +37,41 @@ resource "aws_ecs_task_definition" "strapi" {
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
 
   container_definitions = jsonencode([
-    {
-      name  = "strapi"
-      image = "${aws_ecr_repository.strapi.repository_url}:${var.image_tag}"
-      essential = true
-      portMappings = [{
-        containerPort = 1337
-        hostPort      = 1337
-      }]
-    }
-  ])
-}
+  {
+    name  = "strapi"
+    image = "${aws_ecr_repository.strapi.repository_url}:${var.image_tag}"
+    essential = true
+
+    portMappings = [{
+      containerPort = 1337
+      hostPort      = 1337
+    }]
+
+    environment = [
+      {
+        name  = "DATABASE_HOST"
+        value = aws_db_instance.strapi_db.address
+      },
+      {
+        name  = "DATABASE_PORT"
+        value = "5432"
+      },
+      {
+        name  = "DATABASE_NAME"
+        value = "postgres"
+      },
+      {
+        name  = "DATABASE_USERNAME"
+        value = "strapi"
+      },
+      {
+        name  = "DATABASE_PASSWORD"
+        value = "StrapiPassword123"
+      }
+    ]
+  }
+])
+
 
 #Service using default vpc
 data "aws_vpc" "default" {
