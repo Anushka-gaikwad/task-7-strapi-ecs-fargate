@@ -1,6 +1,4 @@
-#############################################
-# Security Group for EC2
-#############################################
+# Default VPC & subnets
 data "aws_vpc" "default" {
   default = true
 }
@@ -12,20 +10,21 @@ data "aws_subnets" "default" {
   }
 }
 
+# Security group for ECS EC2
 resource "aws_security_group" "ecs_sg" {
   name   = "ecs-ec2-sg"
   vpc_id = data.aws_vpc.default.id
 
   ingress {
-    from_port   = 1337
-    to_port     = 1337
+    from_port   = 22
+    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
-    from_port   = 22
-    to_port     = 22
+    from_port   = 1337
+    to_port     = 1337
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -38,31 +37,7 @@ resource "aws_security_group" "ecs_sg" {
   }
 }
 
-#############################################
-# Single EC2 Instance
-#############################################
-resource "aws_instance" "ecs" {
-  ami           = data.aws_ami.ecs.id
-  instance_type = "t2.micro"
-  subnet_id     = data.aws_subnets.default.ids[0]
-  security_groups = [aws_security_group.ecs_sg.name]
-  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
-
-  user_data = <<EOF
-#!/bin/bash
-yum update -y
-amazon-linux-extras install docker git -y
-service docker start
-usermod -a -G docker ec2-user
-
-# Login to ECR
-$(aws ecr get-login --no-include-email --region ap-south-1)
-EOF
-}
-
-#############################################
 # ECS Optimized AMI
-#############################################
 data "aws_ami" "ecs" {
   most_recent = true
   owners      = ["amazon"]
@@ -73,28 +48,49 @@ data "aws_ami" "ecs" {
   }
 }
 
-#############################################
-# IAM Role & Instance Profile
-#############################################
-resource "aws_iam_role" "ecs_role" {
-  name = "ecsEC2Role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-    }]
-  })
+# Launch Template
+resource "aws_launch_template" "ecs" {
+  name_prefix   = "ecs-template-"
+  image_id      = data.aws_ami.ecs.id
+  instance_type = "t2.micro"
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ecs_instance_profile.name
+  }
+
+  vpc_security_group_ids = [aws_security_group.ecs_sg.id]
+
+  user_data = base64encode(<<EOF
+#!/bin/bash
+yum update -y
+amazon-linux-extras install docker git -y
+service docker start
+usermod -a -G docker ec2-user
+
+# Login to ECR using EC2 role
+$(aws ecr get-login --no-include-email --region ap-south-1)
+
+# Pull and build Strapi
+cd /home/ec2-user
+git clone https://github.com/Anushka-gaikwad/task-7-strapy-ecs-fargate.git strapi-app
+cd strapi-app/app
+docker build -t strapi-app:latest .
+docker tag strapi-app:latest ${aws_ecr_repository.strapi.repository_url}:latest
+docker push ${aws_ecr_repository.strapi.repository_url}:latest
+EOF
+  )
 }
 
-resource "aws_iam_role_policy_attachment" "ecs_attach" {
-  role       = aws_iam_role.ecs_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
-}
+# Auto Scaling Group
+resource "aws_autoscaling_group" "ecs" {
+  desired_capacity    = 1
+  min_size            = 1
+  max_size            = 1
+  vpc_zone_identifier = data.aws_subnets.default.ids
 
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "ecsInstanceProfile"
-  role = aws_iam_role.ecs_role.name
+  launch_template {
+    id      = aws_launch_template.ecs.id
+    version = "$Latest"
+  }
 }
 
