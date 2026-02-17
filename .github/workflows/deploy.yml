@@ -1,27 +1,52 @@
-name: Deploy to ECS
+name: Deploy Strapi to ECS Fargate
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: strapi-app
+  ECS_CLUSTER: strapi-cluster
+  ECS_SERVICE: strapi-service
+  TASK_FAMILY: strapi-task
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.6.0
+    - name: Checkout code
+      uses: actions/checkout@v3
 
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Init
-        run: terraform -chdir=terraform init
+    - name: Login to ECR
+      uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Terraform Apply
-        run: terraform -chdir=terraform apply -auto-approve
+    - name: Build Docker image
+      run: |
+        docker build -t $ECR_REPOSITORY ./my-strapi
 
+    - name: Tag image
+      run: |
+        docker tag $ECR_REPOSITORY:latest \
+        ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}
+
+    - name: Push image to ECR
+      run: |
+        docker push \
+        ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/$ECR_REPOSITORY:${{ github.sha }}
+
+    - name: Update ECS service
+      run: |
+        aws ecs update-service \
+          --cluster $ECS_CLUSTER \
+          --service $ECS_SERVICE \
+          --force-new-deployment          
