@@ -1,0 +1,56 @@
+name: Terraform + Strapi Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.7.6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::811738710312:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS
+          aws-region: us-east-1
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <your-ecr-repo>
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE_TAG=strapi:${GITHUB_SHA}
+          docker build -t $IMAGE_TAG .
+          docker tag $IMAGE_TAG <your-ecr-repo>:$IMAGE_TAG
+          docker push <your-ecr-repo>:$IMAGE_TAG
+
+      - name: Update ECS task definition
+        uses: aws-actions/amazon-ecs-update-task-definition@v2
+        with:
+          cluster: strapi-cluster
+          service: strapi-service
+          container-name: strapi
+          image: <your-ecr-repo>:$IMAGE_TAG
+
