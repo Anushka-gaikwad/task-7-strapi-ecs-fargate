@@ -1,3 +1,22 @@
+#############################################
+# Default VPC & Subnets
+#############################################
+
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+#############################################
+# ECS Optimized AMI
+#############################################
+
 data "aws_ami" "ecs" {
   most_recent = true
 
@@ -9,6 +28,10 @@ data "aws_ami" "ecs" {
   owners = ["amazon"]
 }
 
+#############################################
+# Security Group for EC2
+#############################################
+
 resource "aws_security_group" "ecs_sg" {
   name   = "ecs-ec2-sg"
   vpc_id = data.aws_vpc.default.id
@@ -17,14 +40,14 @@ resource "aws_security_group" "ecs_sg" {
     from_port   = 1337
     to_port     = 1337
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # assignment simplicity
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"] # optional SSH
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   egress {
@@ -34,6 +57,10 @@ resource "aws_security_group" "ecs_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
+#############################################
+# Launch Template for ECS EC2 Instances
+#############################################
 
 resource "aws_launch_template" "ecs" {
   name_prefix   = "ecs-template-"
@@ -66,5 +93,22 @@ docker build -t strapi-app:latest .
 docker tag strapi-app:latest ${aws_ecr_repository.strapi.repository_url}:latest
 docker push ${aws_ecr_repository.strapi.repository_url}:latest
 EOF
-)
+  )
+}
+
+#############################################
+# Auto Scaling Group for ECS EC2 Instances
+#############################################
+
+resource "aws_autoscaling_group" "ecs" {
+  desired_capacity    = 1
+  min_size            = 1
+  max_size            = 1
+  vpc_zone_identifier = data.aws_subnets.default.ids
+
+  launch_template {
+    id      = aws_launch_template.ecs.id
+    version = "$Latest"
+  }
+}
 
